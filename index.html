@@ -58,6 +58,11 @@ body{
 .authTabs button.active{background:var(--brass); color:#191308;}
 @media(max-width:850px){ .loginScreen{flex-direction:column;} .loginBrand{padding:40px 28px;} .loginBrand h1{font-size:36px;} }
 
+.pwWrap{position:relative;}
+.pwWrap input{padding-right:44px;}
+.eyeBtn{position:absolute; right:6px; top:50%; transform:translateY(-50%); background:none; border:none; color:var(--paper-dim); cursor:pointer; padding:6px; display:flex; align-items:center; justify-content:center;}
+.eyeBtn:hover{color:var(--brass);}
+
 /* ---------- APP HEADER + LAYOUT ---------- */
 header{
   position:sticky; top:0; z-index:10; padding:16px 32px;
@@ -200,7 +205,15 @@ td:first-child{font-family:var(--sans); font-weight:500;}
         <button id="tabSignUp" onclick="setAuthMode('signup')">Sign Up</button>
       </div>
       <div class="field"><label>Email</label><input id="authEmail" type="email" placeholder="you@email.com"></div>
-      <div class="field"><label>Password</label><input id="authPassword" type="password" placeholder="At least 6 characters"></div>
+      <div class="field">
+        <label>Password</label>
+        <div class="pwWrap">
+          <input id="authPassword" type="password" placeholder="At least 6 characters">
+          <button type="button" class="eyeBtn" id="eyeBtn" aria-label="Show password" onclick="togglePassword()">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+        </div>
+      </div>
       <button class="run" id="authSubmitBtn" onclick="handleAuthSubmit()">Sign In</button>
       <div id="authError" style="margin-top:12px;"></div>
     </div>
@@ -300,6 +313,18 @@ td:first-child{font-family:var(--sans); font-weight:500;}
   </div>
 </div>
 
+<script>
+function togglePassword(){
+  var input = document.getElementById('authPassword');
+  var btn = document.getElementById('eyeBtn');
+  var show = input.type === 'password';
+  input.type = show ? 'text' : 'password';
+  btn.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+  btn.innerHTML = show
+    ? '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>'
+    : '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+}
+</script>
 <script type="module" src="/src/main.js"></script>
 </body>
 </html>
