@@ -1,6 +1,7 @@
 import { supabase } from './supabase.js';
 
 function esc(s){ if(s===undefined||s===null) return ''; return String(s).replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+const $ = (id) => document.getElementById(id);
 
 let currentUserId = null;
 let analystName = '';
@@ -10,16 +11,20 @@ let currentReport = null;
 
 let authMode = 'signin';
 
-function toggleAuthMode(){
-  authMode = authMode === 'signin' ? 'signup' : 'signin';
-  document.getElementById('authTitle').textContent = authMode === 'signin' ? 'Sign in' : 'Create an account';
-  document.getElementById('authSubmitBtn').textContent = authMode === 'signin' ? 'Sign In' : 'Sign Up';
+function setAuthMode(mode){
+  authMode = mode;
+  $('tabSignIn').classList.toggle('active', mode === 'signin');
+  $('tabSignUp').classList.toggle('active', mode === 'signup');
+  $('authSubmitBtn').textContent = mode === 'signin' ? 'Sign In' : 'Create Account';
+  $('authHeading').textContent = mode === 'signin' ? 'Welcome back' : 'Create your account';
+  $('authSub').textContent = mode === 'signin' ? 'Sign in to open your case files.' : 'Sign up to start building competitive reports.';
+  $('authError').innerHTML = '';
 }
 
 async function handleAuthSubmit(){
-  const email = document.getElementById('authEmail').value.trim();
-  const password = document.getElementById('authPassword').value;
-  const errBox = document.getElementById('authError');
+  const email = $('authEmail').value.trim();
+  const password = $('authPassword').value;
+  const errBox = $('authError');
   errBox.innerHTML = '';
   if(!email || !password){ errBox.innerHTML = '<div class="err">Enter email and password.</div>'; return; }
   try{
@@ -41,26 +46,21 @@ async function handleLogout(){
 }
 
 function updateAuthUI(session){
-  const authCard = document.getElementById('authCard');
-  const appRoot = document.getElementById('appRoot');
-  const logoutBtn = document.getElementById('logoutBtn');
-  const userLabel = document.getElementById('userLabel');
   if(session && session.user){
-    authCard.classList.add('hidden');
-    appRoot.classList.remove('hidden');
-    logoutBtn.classList.remove('hidden');
-    userLabel.textContent = session.user.email;
+    $('authScreen').classList.add('hidden');
+    $('appRoot').classList.remove('hidden');
+    $('userLabel').textContent = session.user.email;
     currentUserId = session.user.id;
     analystName = session.user.email;
     loadSavedReports();
   } else {
-    authCard.classList.remove('hidden');
-    appRoot.classList.add('hidden');
-    logoutBtn.classList.add('hidden');
+    $('authScreen').classList.remove('hidden');
+    $('appRoot').classList.add('hidden');
     currentUserId = null;
   }
 }
 
+$('authPassword').addEventListener('keydown', (e)=>{ if(e.key === 'Enter') handleAuthSubmit(); });
 supabase.auth.onAuthStateChange((_event, session)=> updateAuthUI(session));
 supabase.auth.getSession().then(({data})=> updateAuthUI(data.session));
 
@@ -178,8 +178,6 @@ function downloadBlob(blob, filename){
   URL.revokeObjectURL(url);
 }
 
-/* ---------- REPORT RENDER / EXPORT ---------- */
-
 async function downloadWord(){
   if(!currentReport){ showError('Nothing to download yet — run an analysis first.'); return; }
   if(!window.docx){ showError('Word library failed to load — try again in a moment.'); return; }
@@ -271,16 +269,25 @@ async function downloadPdf(){
   doc.setFillColor(ACCENT[0], ACCENT[1], ACCENT[2]);
   doc.rect(0, 0, 595, 8, 'F');
 
+  const coverY = 320;
   const logoData = await tryFetchLogoDataUrl(target);
-  let coverY = 260;
+  let logoDrawn = false;
   if(logoData){
     try{
       doc.setFillColor(255,255,255);
-      doc.roundedRect(247, 150, 100, 100, 8, 8, 'F');
-      doc.addImage(logoData, 'PNG', 262, 165, 70, 70);
-      coverY = 300;
-    }catch(e){ /* skip logo if it fails to embed */ }
+      doc.circle(297, 220, 50, 'F');
+      doc.addImage(logoData, 'PNG', 267, 190, 60, 60);
+      logoDrawn = true;
+    }catch(e){ /* fall through to the generic badge */ }
   }
+  if(!logoDrawn){
+    doc.setFillColor(ACCENT[0], ACCENT[1], ACCENT[2]);
+    doc.circle(297, 220, 50, 'F');
+    doc.setTextColor(255,255,255);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(42);
+    doc.text((target || '?').trim().charAt(0).toUpperCase(), 297, 236, { align: 'center' });
+  }
+
   doc.setTextColor(255,255,255);
   doc.setFont('helvetica', 'bold'); doc.setFontSize(30);
   doc.text(target, 297, coverY, { align: 'center' });
@@ -378,7 +385,7 @@ async function downloadPdf(){
   }
 }
 
-/* ---------- EXAMPLES ---------- */
+/* ---------- EXAMPLES / FORM HELPERS ---------- */
 
 const EXAMPLE_CASES = [
   { industry: 'Online Food Delivery (India)', target: 'Zomato', competitors: 'Swiggy, ONDC-based apps, Magicpin', objective: 'Competitive positioning review', reportType: 'standard', extra: 'Focus on quick-commerce (Blinkit) as a strategic distraction vs. core food delivery margins.' },
@@ -388,28 +395,43 @@ const EXAMPLE_CASES = [
   { industry: 'Ride-Hailing & Mobility (India)', target: 'Ola', competitors: 'Uber, Rapido, inDrive', objective: 'Product gap analysis', reportType: 'case', extra: '' }
 ];
 
-function loadExample(){
-  const ex = EXAMPLE_CASES[Math.floor(Math.random()*EXAMPLE_CASES.length)];
-  document.getElementById('industry').value = ex.industry;
-  document.getElementById('target').value = ex.target;
-  document.getElementById('competitors').value = ex.competitors;
-  document.getElementById('objective').value = ex.objective;
-  document.getElementById('reportType').value = ex.reportType;
-  document.getElementById('extraInstructions').value = ex.extra;
-  document.getElementById('errorBox').classList.add('hidden');
-  document.getElementById('setupCard').scrollIntoView({behavior:'smooth', block:'start'});
+function renderExampleChips(){
+  const box = $('exampleChips');
+  box.innerHTML = '';
+  [0, 1, 3].forEach(i=>{
+    const ex = EXAMPLE_CASES[i];
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'chip';
+    btn.textContent = `${ex.target} vs ${ex.competitors.split(',')[0].trim()}`;
+    btn.addEventListener('click', ()=> loadExample(i));
+    box.appendChild(btn);
+  });
+}
+
+function loadExample(i){
+  const idx = (typeof i === 'number') ? i : Math.floor(Math.random()*EXAMPLE_CASES.length);
+  const ex = EXAMPLE_CASES[idx];
+  $('industry').value = ex.industry;
+  $('target').value = ex.target;
+  $('competitors').value = ex.competitors;
+  $('objective').value = ex.objective;
+  $('reportType').value = ex.reportType;
+  $('extraInstructions').value = ex.extra;
+  $('errorBox').classList.add('hidden');
+  $('setupCard').scrollIntoView({behavior:'smooth', block:'start'});
 }
 
 async function suggestCompetitors(){
-  const industry = document.getElementById('industry').value.trim();
-  const target = document.getElementById('target').value.trim();
+  const industry = $('industry').value.trim();
+  const target = $('target').value.trim();
   if(!industry || !target){ showError('Fill in Target Industry and Target Company first — the suggestion needs both.'); return; }
-  const btn = document.getElementById('suggestBtn');
+  const btn = $('suggestBtn');
   if(btn){ btn.disabled = true; btn.textContent = '…'; }
   try{
     const result = await callAI(`For the company "${target}" in the "${industry}" industry, name their 3-4 most relevant real, direct competitors — the companies a strategy analyst would actually put in a competitive set for this company, not just other big names in the space. Return JSON: {"competitors": ["Name 1", "Name 2", "Name 3"]}`);
     const names = (result.competitors || []).filter(Boolean);
-    if(names.length) document.getElementById('competitors').value = names.join(', ');
+    if(names.length) $('competitors').value = names.join(', ');
     else showError('Could not suggest competitors — try naming them yourself.');
   }catch(e){
     showError('Competitor suggestion failed: ' + (e && e.message ? e.message : 'unknown error'));
@@ -419,15 +441,21 @@ async function suggestCompetitors(){
 }
 
 function backToSetup(){
-  document.getElementById('setupCard').classList.remove('hidden');
-  document.getElementById('topActions').classList.add('hidden');
-  document.getElementById('results').classList.add('hidden');
+  currentReport = null;
+  ['industry','target','competitors','extraInstructions'].forEach(id=>{ $(id).value = ''; });
+  $('uploadFile').value = '';
+  $('results').classList.add('hidden');
+  $('topActions').classList.add('hidden');
+  $('errorBox').classList.add('hidden');
+  $('emptyState').classList.remove('hidden');
+  $('status').textContent = 'READY';
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
-if(window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+if(window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
 
 async function parseUploadedFile(){
-  const input = document.getElementById('uploadFile');
+  const input = $('uploadFile');
   const file = input && input.files && input.files[0];
   if(!file) return { text: '', name: '' };
   const name = file.name;
@@ -484,7 +512,7 @@ async function saveReport(inputs, data){
 }
 
 async function loadSavedReports(){
-  const list = document.getElementById('savedList');
+  const list = $('savedList');
   if(!currentUserId){ list.innerHTML = '<div class="emptyNote">Sign in to see your saved reports.</div>'; return; }
   try{
     const { data: rows, error } = await supabase.from('reports').select('*').order('created_at', { ascending: false }).limit(20);
@@ -503,7 +531,7 @@ async function loadSavedReports(){
       html += `<div class="savedRow">
         <div class="savedMeta" data-id="${r.id}" style="flex:1;">
           <b>${esc(r.target)} <span style="color:var(--paper-dim); font-weight:400;">vs ${esc(r.competitors)}</span></b>
-          <span>${esc(r.industry)} · ${esc(r.analyst||'Unidentified analyst')} · ${d.toLocaleDateString()}${confTag ? ' · '+confTag : ''}${vTag ? ' · '+vTag : ''}</span>
+          <span>${esc(r.industry)} · ${d.toLocaleDateString()}${confTag ? ' · '+confTag : ''}${vTag ? ' · '+vTag : ''}</span>
         </div>
         <button class="savedDel" data-del-id="${r.id}" title="Delete">✕</button>
       </div>`;
@@ -527,15 +555,20 @@ async function openSaved(id){
   try{
     const { data: r, error } = await supabase.from('reports').select('*').eq('id', id).single();
     if(error || !r) return;
+    $('industry').value = r.industry || '';
+    $('target').value = r.target || '';
+    $('competitors').value = r.competitors || '';
+    if(r.objective) $('objective').value = r.objective;
+    $('errorBox').classList.add('hidden');
+    $('emptyState').classList.add('hidden');
     render(r.data, r.target, r.competitors, r.industry, r.objective);
     currentReport.savedId = id;
     currentReport.analyst = r.analyst;
     currentReport.verification = r.verification || { status:'unverified', note:'' };
     renderVerificationPanel();
-    document.getElementById('setupCard').classList.add('hidden');
-    document.getElementById('topActions').classList.remove('hidden');
-    document.getElementById('status').textContent = 'VIEWING SAVED';
-    document.getElementById('results').scrollIntoView({behavior:'smooth'});
+    $('topActions').classList.remove('hidden');
+    $('status').textContent = 'VIEWING SAVED';
+    $('rightCol').scrollIntoView({behavior:'smooth', block:'start'});
   }catch(e){ showError('Could not open that saved report.'); }
 }
 
@@ -544,26 +577,24 @@ async function deleteSaved(id){
 }
 
 function renderVerificationPanel(){
-  const box = document.getElementById('verifyBox');
+  const box = $('verifyBox');
   if(!box || !currentReport) return;
   const v = currentReport.verification || { status:'unverified', note:'' };
   const statusLabel = v.status === 'verified' ? 'Marked accurate' : v.status === 'flagged' ? 'Flagged with issues' : 'Not yet reviewed';
-  box.innerHTML = `<div class="panel" style="margin-top:0;">
-    <p class="panel-kicker">Verification</p>
-    <p class="emptyNote" style="font-style:normal; margin-bottom:12px;">Status: <b style="color:${v.status==='verified'?'var(--sage)':v.status==='flagged'?'var(--oxblood)':'var(--paper)'}">${statusLabel}</b>${v.by ? ` · by ${esc(v.by)}` : ''}</p>
+  box.innerHTML = `<h3>Verification</h3>
+    <p class="emptyNote" style="font-style:normal; margin:0 0 12px;">Status: <b style="color:${v.status==='verified'?'var(--sage)':v.status==='flagged'?'var(--oxblood)':'var(--paper)'}">${statusLabel}</b>${v.by ? ` · by ${esc(v.by)}` : ''}</p>
     <div class="field"><label>Note (what did you check?)</label><textarea id="verifyNote" rows="2" placeholder="e.g. Confirmed FY25 revenue against investor presentation">${esc(v.note||'')}</textarea></div>
     <div class="topActions" style="margin-bottom:0;">
       <button class="btn2" id="verifyOkBtn">✓ Mark accurate</button>
       <button class="btn2" id="verifyFlagBtn">✕ Flag issues</button>
-    </div>
-  </div>`;
-  document.getElementById('verifyOkBtn').addEventListener('click', ()=>setVerification('verified'));
-  document.getElementById('verifyFlagBtn').addEventListener('click', ()=>setVerification('flagged'));
+    </div>`;
+  $('verifyOkBtn').addEventListener('click', ()=>setVerification('verified'));
+  $('verifyFlagBtn').addEventListener('click', ()=>setVerification('flagged'));
 }
 
 async function setVerification(status){
   if(!currentReport || !currentReport.savedId){ showError('Save this report first (it saves automatically after a run) before verifying it.'); return; }
-  const note = document.getElementById('verifyNote').value.trim();
+  const note = $('verifyNote').value.trim();
   const verification = { status, note, at: Date.now(), by: analystName || 'Unidentified analyst' };
   currentReport.verification = verification;
   try{ await supabase.from('reports').update({ verification }).eq('id', currentReport.savedId); }catch(e){ /* best-effort */ }
@@ -575,30 +606,33 @@ async function setVerification(status){
 
 async function runAnalysis(){
   if(!currentUserId){ showError('Please sign in first.'); return; }
-  const industry = document.getElementById('industry').value.trim();
-  const target = document.getElementById('target').value.trim();
-  const competitors = document.getElementById('competitors').value.trim();
-  const objective = document.getElementById('objective').value;
-  const reportType = document.getElementById('reportType').value;
-  const extraInstructions = document.getElementById('extraInstructions').value.trim();
+  const industry = $('industry').value.trim();
+  const target = $('target').value.trim();
+  const competitors = $('competitors').value.trim();
+  const objective = $('objective').value;
+  const reportType = $('reportType').value;
+  const extraInstructions = $('extraInstructions').value.trim();
 
   if(!industry || !target || !competitors){ showError("Fill in industry, target company, and at least 2 competitors."); return; }
 
-  document.getElementById('runBtn').disabled = true;
-  document.getElementById('errorBox').classList.add('hidden');
-  document.getElementById('results').classList.add('hidden');
-  document.getElementById('loading').classList.remove('hidden');
-  document.getElementById('status').textContent = 'RUNNING';
+  currentReport = null;
+  $('runBtn').disabled = true;
+  $('errorBox').classList.add('hidden');
+  $('results').classList.add('hidden');
+  $('topActions').classList.add('hidden');
+  $('emptyState').classList.add('hidden');
+  $('loading').classList.remove('hidden');
+  $('status').textContent = 'RUNNING';
 
-  document.getElementById('loadingText').textContent = 'Reading uploaded file…';
+  $('loadingText').textContent = 'Reading uploaded file…';
   const uploaded = await parseUploadedFile();
   const uploadedContext = uploaded.text;
   const uploadedFileName = uploaded.name;
 
   const webContext = await fetchWebContext(industry, target, competitors, (q)=>{
-    document.getElementById('loadingText').textContent = 'Searching — ' + q;
+    $('loadingText').textContent = 'Searching — ' + q;
   });
-  document.getElementById('loadingText').textContent = 'Synthesizing report…';
+  $('loadingText').textContent = 'Synthesizing report…';
 
   const reportTypeInstructions = {
     standard: 'Standard depth and tone — balanced detail across all sections.',
@@ -644,21 +678,21 @@ Include exactly 6 benchmark_matrix rows as listed above, populated for every com
     data._uploadedFile = uploadedFileName || null;
     data._confidence = computeConfidence(data);
     render(data, target, competitors, industry, objective);
-    document.getElementById('status').textContent = 'COMPLETE';
-    document.getElementById('setupCard').classList.add('hidden');
-    document.getElementById('topActions').classList.remove('hidden');
+    $('status').textContent = 'COMPLETE';
+    $('topActions').classList.remove('hidden');
     saveReport({industry, target, competitors, objective}, data).then(()=> renderVerificationPanel());
   }catch(e){
     showError("Analysis failed: " + e.message);
-    document.getElementById('status').textContent = 'ERROR';
+    $('emptyState').classList.remove('hidden');
+    $('status').textContent = 'ERROR';
   }finally{
-    document.getElementById('loading').classList.add('hidden');
-    document.getElementById('runBtn').disabled = false;
+    $('loading').classList.add('hidden');
+    $('runBtn').disabled = false;
   }
 }
 
 function showError(msg){
-  const box = document.getElementById('errorBox');
+  const box = $('errorBox');
   box.innerHTML = '<div class="err">' + esc(msg) + '</div>';
   box.classList.remove('hidden');
   box.scrollIntoView({behavior:'smooth', block:'center'});
@@ -679,13 +713,15 @@ function computeConfidence(d){
   return { cited, estimated, total, pct };
 }
 
-function palette(i){ const c = ['#c99a47','#b1584a','#6f9c7e','#7c8bb0','#9b7fc2','#5aa8a8']; return c[i % c.length]; }
+/* ---------- REPORT RENDERING ---------- */
 
-function renderRadar(scores){
+function palette(i){ const c = ['#5ec8ff','#ef5b4e','#5fd6a0','#ffab1f','#9b7fc2','#5aa8a8']; return c[i % c.length]; }
+
+function renderStrengthCard(scores){
   const axes = scores.axes || [];
   const companies = Object.keys(scores.companies || {});
   if(!axes.length || !companies.length) return '';
-  const n = axes.length, R = 110, cx = 150, cy = 130;
+  const n = axes.length, R = 100, cx = 150, cy = 130;
   const angle = i => (Math.PI*2*i/n) - Math.PI/2;
   const pt = (i, val) => { const r = (val/5)*R; return [cx + r*Math.cos(angle(i)), cy + r*Math.sin(angle(i))]; };
   let svg = `<svg viewBox="0 0 300 270" style="width:100%; max-width:340px; display:block; margin:0 auto;">`;
@@ -706,7 +742,7 @@ function renderRadar(scores){
     svg += `<polygon points="${pts}" fill="${col}" fill-opacity="0.12" stroke="${col}" stroke-width="2"/>`;
   });
   svg += `</svg>`;
-  let legend = `<div class="legend">${companies.map((c,i)=>`<span><span class="dot" style="background:${palette(i)}"></span>${esc(c)}</span>`).join('')}</div>`;
+  const legend = `<div class="legend">${companies.map((c,i)=>`<span><span class="dot" style="background:${palette(i)}"></span>${esc(c)}</span>`).join('')}</div>`;
   let bars = '';
   companies.forEach((name,ci)=>{
     const vals = scores.companies[name] || [];
@@ -715,21 +751,14 @@ function renderRadar(scores){
       <div class="scorebar-track"><div class="scorebar-fill" style="width:${(avg/5*100).toFixed(0)}%; background:${palette(ci)}"></div></div>
       <div class="scorebar-val">${avg.toFixed(1)}</div></div>`;
   });
-  return `<div class="entry"><div class="entryHead"><span class="folio">D</span><h2 class="entryTitle">Competitive Strength Index</h2></div>
-    <div class="entryBody">${svg}${legend}
-    <div style="margin-top:16px; padding-top:14px; border-top:1px solid var(--line);">
-      <div style="font-size:12.5px; color:var(--paper-dim); margin-bottom:10px; font-weight:500;">Composite score, average of ${axes.length} axes</div>
-      ${bars}
-    </div></div></div>`;
+  return `<div class="card"><h3>Competitive Strength Index</h3>${svg}${legend}
+    <div style="margin-top:16px; padding-top:14px; border-top:1px solid var(--line);">${bars}</div></div>`;
 }
 
 function renderConfidenceBadge(c){
   if(!c || c.total === 0) return '';
   const color = c.pct >= 75 ? 'var(--sage)' : c.pct >= 50 ? 'var(--amber)' : 'var(--oxblood)';
-  return `<div style="margin-top:14px; padding-top:12px; border-top:1px solid var(--line); display:flex; align-items:center; gap:10px;">
-    <div style="font-family:var(--data); font-size:20px; font-weight:600; color:${color};">${c.pct}%</div>
-    <div class="metaLine" style="margin-top:0;">grounded — <b style="color:var(--paper);">${c.cited}</b> cited claim${c.cited===1?'':'s'}, <b style="color:var(--paper);">${c.estimated}</b> marked as estimate${c.estimated===1?'':'s'}</div>
-  </div>`;
+  return `<div class="confBadge" style="border-color:${color};"><b style="color:${color};">${c.pct}%</b> grounded — ${c.cited} cited claim${c.cited===1?'':'s'}, ${c.estimated} marked as estimate${c.estimated===1?'':'s'}</div>`;
 }
 
 function render(d, target, competitors, industry, objective){
@@ -738,74 +767,74 @@ function render(d, target, competitors, industry, objective){
   const attribution = analystName ? `Prepared by ${analystName}` : '';
   let html = '';
 
-  html += `<div class="entry"><div class="entryHead"><span class="folio">A</span><h2 class="entryTitle">${esc(target)}</h2></div>
-    <div class="entryBody"><div class="metaLine">${esc(metaLine)}</div>
+  html += `<div class="reportMasthead">
+    <h2>${esc(target)}</h2>
+    <div class="metaLine">${esc(metaLine)}</div>
     ${attribution ? `<div class="metaLine" style="opacity:.7;">${esc(attribution)}</div>` : ''}
-    <p class="exec" style="margin-top:14px;">${esc(d.executive_summary||'')}</p>
     ${renderConfidenceBadge(d._confidence)}
-    </div></div>`;
+  </div>`;
 
-  if(d._sources && d._sources.length){
-    html += `<div class="entry"><div class="entryHead"><span class="folio">B</span><h2 class="entryTitle">Live Web Sources</h2></div>
-    <div class="entryBody">
-    ${d._uploadedFile ? `<p class="metaLine" style="margin-bottom:10px;">+ analyst-uploaded file: <b style="color:var(--paper);">${esc(d._uploadedFile)}</b></p>` : ''}
-    <ol style="margin:0; padding-left:18px; font-size:12.5px; line-height:1.8;">
-    ${d._sources.map(s=>`<li><a href="${esc(s.url)}" target="_blank" rel="noopener" style="color:var(--brass);">${esc(s.title)}</a>${s.fullText ? ' <span style="color:var(--sage); font-size:11px;">· full text read</span>' : ''}</li>`).join('')}
-    </ol></div></div>`;
-  }
+  html += `<div class="cardGrid">`;
+
+  html += `<div class="card fullCard"><h3>Executive Summary</h3><p class="exec">${esc(d.executive_summary||'')}</p></div>`;
 
   if(d.footprint){
-    html += `<div class="entry"><div class="entryHead"><span class="folio">B</span><h2 class="entryTitle">Operational Footprint</h2></div>
-    <div class="entryBody"><div class="overflow"><table><tbody>`;
-    Object.keys(d.footprint).forEach(k=>{ html += `<tr><td style="width:32%; font-family:var(--sans); font-weight:500;">${esc(k)}</td><td style="font-family:var(--sans); font-weight:400;">${esc(d.footprint[k])}</td></tr>`; });
-    html += `</tbody></table></div></div></div>`;
+    html += `<div class="card fullCard"><h3>Operational Footprint</h3><div class="overflow"><table><tbody>`;
+    Object.keys(d.footprint).forEach(k=>{ html += `<tr><td style="width:24%;">${esc(k)}</td><td style="font-family:var(--sans); font-weight:400;">${esc(d.footprint[k])}</td></tr>`; });
+    html += `</tbody></table></div></div>`;
   }
 
   if(d.benchmark_matrix && d.benchmark_matrix.columns){
-    html += `<div class="entry"><div class="entryHead"><span class="folio">D</span><h2 class="entryTitle">Competitive Benchmarking Matrix</h2></div>
-    <div class="entryBody"><div class="overflow"><table><thead><tr>${d.benchmark_matrix.columns.map(c=>`<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>`;
+    html += `<div class="card fullCard"><h3>Competitive Benchmarking Matrix</h3><div class="overflow"><table><thead><tr>${d.benchmark_matrix.columns.map(c=>`<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>`;
     (d.benchmark_matrix.rows||[]).forEach(row=>{ html += '<tr>' + row.map(cell=>`<td>${esc(cell)}</td>`).join('') + '</tr>'; });
-    html += `</tbody></table></div></div></div>`;
+    html += `</tbody></table></div></div>`;
   }
 
   if(d.swot){
-    html += `<div class="entry"><div class="entryHead"><span class="folio">D</span><h2 class="entryTitle">SWOT & Gap Analysis</h2></div>
-    <div class="entryBody"><div class="swotCross">
+    html += `<div class="card fullCard"><h3>SWOT &amp; Gap Analysis</h3><div class="swotGrid">
       <div class="swotQ q-s"><h4>Strengths</h4><ul>${(d.swot.strengths||[]).map(s=>`<li>${esc(s)}</li>`).join('')}</ul></div>
       <div class="swotQ q-w"><h4>Weaknesses</h4><ul>${(d.swot.weaknesses||[]).map(s=>`<li>${esc(s)}</li>`).join('')}</ul></div>
       <div class="swotQ q-o"><h4>Opportunities</h4><ul>${(d.swot.opportunities||[]).map(s=>`<li>${esc(s)}</li>`).join('')}</ul></div>
       <div class="swotQ q-t"><h4>Threats</h4><ul>${(d.swot.threats||[]).map(s=>`<li>${esc(s)}</li>`).join('')}</ul></div>
-    </div></div></div>`;
+    </div></div>`;
   }
 
-  if(d.scores) html += renderRadar(d.scores);
+  if(d.scores) html += renderStrengthCard(d.scores);
 
   if(d.vulnerabilities && d.vulnerabilities.length){
-    html += `<div class="entry"><div class="entryHead"><span class="folio">D</span><h2 class="entryTitle">Strategic Vulnerabilities</h2></div>
-    <div class="entryBody">${d.vulnerabilities.map(v=>`<div class="vuln"><p>${esc(v)}</p></div>`).join('')}</div></div>`;
+    html += `<div class="card"><h3>Strategic Vulnerabilities</h3>${d.vulnerabilities.map(v=>`<div class="vuln"><p>${esc(v)}</p></div>`).join('')}</div>`;
   }
 
   if(d.strategic_takeaways && d.strategic_takeaways.length){
-    html += `<div class="entry"><div class="entryHead"><span class="folio">E</span><h2 class="entryTitle">Key Strategic Takeaways</h2></div>
-    <div class="entryBody"><ul style="margin:0; padding-left:18px; font-size:13.5px; line-height:1.8;">${d.strategic_takeaways.map(t=>`<li>${esc(t)}</li>`).join('')}</ul></div></div>`;
+    html += `<div class="card"><h3>Key Strategic Takeaways</h3><ul style="margin:0; padding-left:18px;">${d.strategic_takeaways.map(t=>`<li style="margin-bottom:8px;">${esc(t)}</li>`).join('')}</ul></div>`;
   }
 
   if(d.recommendations && d.recommendations.length){
-    html += `<div class="entry"><div class="entryHead"><span class="folio">E</span><h2 class="entryTitle">Actionable Recommendations</h2></div>
-    <div class="entryBody">${d.recommendations.map(r=>`<div class="reco"><b>${esc(r.title)}</b><p>${esc(r.detail)}</p></div>`).join('')}</div></div>`;
+    html += `<div class="card"><h3>Actionable Recommendations</h3>${d.recommendations.map(r=>`<div class="reco"><b>${esc(r.title)}</b><p>${esc(r.detail)}</p></div>`).join('')}</div>`;
   }
 
-  html += `<div id="verifyBox"></div>`;
+  if(d._sources && d._sources.length){
+    html += `<div class="card fullCard"><h3>Live Web Sources</h3>
+    ${d._uploadedFile ? `<p class="metaLine" style="margin-bottom:10px;">+ analyst-uploaded file: <b style="color:var(--paper);">${esc(d._uploadedFile)}</b></p>` : ''}
+    <ol style="margin:0; padding-left:18px; font-size:12.5px; line-height:1.8;">
+    ${d._sources.map(s=>`<li><a href="${esc(s.url)}" target="_blank" rel="noopener" style="color:var(--brass);">${esc(s.title)}</a>${s.fullText ? ' <span style="color:var(--sage); font-size:11px;">· full text read</span>' : ''}</li>`).join('')}
+    </ol></div>`;
+  }
 
-  document.getElementById('results').innerHTML = html;
-  document.getElementById('results').classList.remove('hidden');
+  html += `<div class="card fullCard" id="verifyBox"></div>`;
+  html += `</div>`;
+
+  $('results').innerHTML = html;
+  $('results').classList.remove('hidden');
+  renderVerificationPanel();
 }
 
 /* ---------- WIRE UP BUTTONS ---------- */
 
+renderExampleChips();
+
 Object.assign(window, {
-  handleAuthSubmit, toggleAuthMode, handleLogout,
+  setAuthMode, handleAuthSubmit, handleLogout,
   runAnalysis, suggestCompetitors, loadExample, backToSetup,
   downloadWord, downloadPdf
 });
-
