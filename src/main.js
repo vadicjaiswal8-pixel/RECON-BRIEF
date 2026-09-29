@@ -66,106 +66,217 @@ supabase.auth.getSession().then(({data})=> updateAuthUI(data.session));
 
 /* ---------- AI (Gemini + Groq backup) ---------- */
 
-async function callGemini(prompt, attempt = 1){
-  const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${apiKey}`;
-  const res = await fetch(url, {
+async function callGemini(prompt){
+  const res = await fetch('/api/ai', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { responseMimeType: 'application/json' }
+      provider: 'gemini',
+      prompt
     })
   });
-  if(!res.ok){
-    if((res.status === 503 || res.status === 429) && attempt < 3){
-      await new Promise(r => setTimeout(r, attempt * 1200));
-      return callGemini(prompt, attempt + 1);
-    }
-    throw new Error('Gemini unavailable');
-  }
+
   const json = await res.json();
-  const text = json.candidates && json.candidates[0] && json.candidates[0].content &&
-    json.candidates[0].content.parts && json.candidates[0].content.parts[0] &&
-    json.candidates[0].content.parts[0].text;
-  if(!text) throw new Error('Gemini returned no content.');
-  return JSON.parse(text);
+
+  if(!res.ok){
+    throw new Error(json.error || 'Gemini request failed.');
+  }
+
+  if(!json.data){
+    throw new Error('Gemini returned no usable data.');
+  }
+
+  return json.data;
 }
 
 async function callGroq(prompt){
-  const apiKey = import.meta.env.VITE_GROQ_API_KEY;
-  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+  const res = await fetch('/api/ai', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: 'llama-3.3-70b-versatile',
-      messages: [{ role: 'user', content: prompt }],
-      response_format: { type: 'json_object' }
+      provider: 'groq',
+      prompt
     })
   });
-  if(!res.ok){
-    const errText = await res.text();
-    throw new Error('Backup AI also failed: ' + errText.slice(0, 200));
-  }
+
   const json = await res.json();
-  const text = json.choices && json.choices[0] && json.choices[0].message && json.choices[0].message.content;
-  if(!text) throw new Error('Backup AI returned no content.');
-  return JSON.parse(text);
+
+  if(!res.ok){
+    throw new Error(json.error || 'Backup AI request failed.');
+  }
+
+  if(!json.data){
+    throw new Error('Backup AI returned no usable data.');
+  }
+
+  return json.data;
 }
 
-async function callAI(prompt){
+async function callAI(prompt, fallbackPrompt){
+  let geminiError;
   try{
     return await callGemini(prompt);
   }catch(e){
-    return await callGroq(prompt);
+    geminiError = e;
+  }
+  try{
+    // The backup AI has a smaller input limit, so it gets the trimmed-down prompt.
+    return await callGroq(fallbackPrompt || prompt);
+  }catch(e2){
+    throw new Error(geminiError.message + '  |  ' + e2.message);
   }
 }
 
 /* ---------- WEB RESEARCH (Tavily) ---------- */
 
-async function tavilySearch(query){
-  const apiKey = import.meta.env.VITE_TAVILY_API_KEY;
-  const res = await fetch('https://api.tavily.com/search', {
+async function tavilySearch(query, maxResults = 5){
+  const res = await fetch('/api/research', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ api_key: apiKey, query, max_results: 5, include_raw_content: true })
+    body: JSON.stringify({
+      query,
+      maxResults
+    })
   });
-  if(!res.ok) return [];
+
+  if(!res.ok){
+    const json = await res.json().catch(() => ({}));
+    throw new Error(json.error || 'Research request failed.');
+  }
+
   const json = await res.json();
-  return json.results || [];
+
+  return Array.isArray(json.results) ? json.results : [];
 }
 
-async function fetchWebContext(industry, target, competitors, onProgress){
+async function fetchWebContext(industry, target, competitors, onProgress, spec){
+  spec = spec || REPORT_SPECS.standard;
   const compList = competitors.split(',').map(s=>s.trim()).filter(Boolean);
   const queries = [
     `${target} ${industry} revenue market share financials 2026`,
-    `${target} vs ${compList.join(' vs ')} ${industry} comparison`,
-    ...compList.slice(0,4).map(c => `${c} ${industry} revenue positioning 2026`)
+    `${target} vs ${compList.join(' vs ')} ${industry} comparison`
   ];
+  if(!spec.lean){
+    queries.push(...compList.slice(0,4).map(c => `${c} ${industry} revenue positioning 2026`));
+  }
+  if(spec.deep){
+    queries.push(
+      `${industry} market size growth trends regulation 2026`,
+      `${target} strategy recent developments 2026`
+    );
+  }
   let sources = [];
   for(const q of queries){
     if(onProgress) onProgress(q);
     try{
-      const results = await tavilySearch(q);
+      const results = await tavilySearch(q, spec.maxResults);
       results.forEach(r=>{
         if(r.url && !sources.find(s=>s.url===r.url)){
           sources.push({
             title: r.title || r.url,
             url: r.url,
             description: r.content ? r.content.slice(0,300) : '',
-            fullText: r.raw_content ? r.raw_content.slice(0,2200) : null
+            fullText: r.raw_content ? r.raw_content.slice(0, spec.rawChars) : null
           });
         }
       });
     }catch(e){ /* one query failing shouldn't kill the run */ }
   }
-  sources = sources.slice(0, 20);
-  const text = sources.map((s,i)=>{
+  sources = sources.slice(0, spec.sourceCap);
+  const fmt = (list, chars) => list.map((s,i)=>{
     const tag = s.fullText ? 'FULL PAGE CONTENT' : 'snippet only';
-    const body = s.fullText || s.description;
+    const body = (s.fullText || s.description).slice(0, chars);
     return `[${i+1}] ${s.title} (${s.url}) — ${tag}:\n${body}`;
   }).join('\n\n');
-  return { text, sources };
+  // textLight = the same numbering, but fewer/shorter sources, for the backup AI's smaller input limit
+  return { text: fmt(sources, spec.rawChars), textLight: fmt(sources.slice(0, 8), 1000), sources };
+}
+
+/* ---------- REPORT TYPES: length and depth ---------- */
+
+const STD_ROWS = ['Pricing Strategy','Product/Service Line','Positioning & USP','Marketing Channels','Distribution/GTM','Financial Position'];
+
+const REPORT_SPECS = {
+  brief: {
+    styleNote: 'Executive brief for a board-level skim: ruthlessly concise, lead with the conclusion, no background or filler. Every sentence must earn its place.',
+    summary: '2-3 sentences', footprint: '1 short sentence',
+    rows: ['Pricing Strategy','Positioning & USP','Distribution/GTM','Financial Position'],
+    cell: 'under 15 words per cell', swot: '2-3 short bullets (under 12 words each)',
+    vulns: 2, vulnLen: '1 sentence each', takeaways: 2, recos: 2, recoLen: '1 sentence each',
+    marketContext: false, lean: true, deep: false, maxResults: 3, rawChars: 1200, sourceCap: 8
+  },
+  standard: {
+    styleNote: 'Standard depth and tone: balanced detail across all sections.',
+    summary: '3-5 sentences', footprint: '1-2 sentences',
+    rows: STD_ROWS,
+    cell: '1-2 sentences per cell', swot: '4-5 bullets',
+    vulns: 3, vulnLen: '1-2 sentences each', takeaways: 3, recos: 3, recoLen: '2-3 sentences each',
+    marketContext: false, lean: false, deep: false, maxResults: 5, rawChars: 2200, sourceCap: 15
+  },
+  deepdive: {
+    styleNote: 'Analyst deep-dive: exhaustive and evidence-heavy. Explain mechanisms and second-order effects, use specific numbers, dates and named examples wherever the sources allow, and never stay generic. This report should be roughly three times as long and detailed as a standard one.',
+    summary: '6-8 sentences', footprint: '4-6 sentences covering scale, geography, business mix, financials and recent strategic moves',
+    rows: [...STD_ROWS, 'Customer Segments & Geography', 'Technology & Operations'],
+    cell: '2-4 sentences per cell with specific evidence', swot: '6-8 detailed bullets (each 1-2 sentences)',
+    vulns: 5, vulnLen: '3-4 sentences each explaining the mechanism', takeaways: 6, recos: 5,
+    recoLen: '4-5 sentences each with a first step, who should own it, and how success would be measured',
+    marketContext: true, lean: false, deep: true, maxResults: 8, rawChars: 3500, sourceCap: 25
+  },
+  case: {
+    styleNote: 'Case-interview style: structured, framework-driven and MECE. Frame the analysis with classic case-prep logic, and write the takeaways as a case conclusion in which each one builds on the last and leads directly to the recommendations.',
+    summary: '3-4 sentences framed as situation, complication, answer', footprint: '2 sentences',
+    rows: STD_ROWS,
+    cell: '1-2 sentences per cell, framework-oriented', swot: '4-5 bullets',
+    vulns: 3, vulnLen: '2 sentences each', takeaways: 4, recos: 3, recoLen: '3 sentences each with a clear rationale',
+    marketContext: false, lean: false, deep: false, maxResults: 5, rawChars: 2200, sourceCap: 15
+  }
+};
+
+function buildPrompt(spec, c){
+  const rowsJson = spec.rows.map(r => `["${r}", "...", "...", "..."]`).join(', ');
+  const schema = `{
+  "executive_summary": "${spec.summary}, specific to the named companies — the 'so what'",
+  "footprint": {"${c.target}": "${spec.footprint}: scale, geography, financial position", "<competitor1>": "...", "<competitor2>": "..."},${spec.marketContext ? `
+  "market_context": "2-3 paragraphs separated by a blank line: market size, growth drivers, regulation and the structural trends shaping this industry, with cited figures",` : ''}
+  "benchmark_matrix": {
+    "columns": ["Vector", "${c.target}", "<competitor1>", "<competitor2>", "..."],
+    "rows": [ ${rowsJson} ]
+  },
+  "swot": { "strengths": ["...", "..."], "weaknesses": ["...", "..."], "opportunities": ["...", "..."], "threats": ["...", "..."] },
+  "scores": {
+    "axes": ["Pricing Power", "Product Strength", "Brand/Marketing", "Distribution Reach", "Financial Strength"],
+    "companies": { "${c.target}": [1,1,1,1,1], "<competitor1>": [1,1,1,1,1] }
+  },
+  "vulnerabilities": ["Specific area where a named competitor is winning share and why, with the mechanism", "..."],
+  "strategic_takeaways": ["...", "..."],
+  "recommendations": [ {"title": "Short action title", "detail": "concrete next step tied to the objective"} ]
+}`;
+
+  const requirements = `LENGTH AND DEPTH REQUIREMENTS — mandatory. These limits define this report type, so follow them exactly:
+- executive_summary: ${spec.summary}.
+- footprint: ${spec.footprint}, for every company.
+- benchmark_matrix: exactly ${spec.rows.length} rows (${spec.rows.join(', ')}), filled in for every company; ${spec.cell}.
+- swot: ${spec.swot} in each of the four quadrants.
+- scores: every company rated on all 5 axes, 1-5 integers, genuinely differentiated.
+- vulnerabilities: exactly ${spec.vulns}, each naming a specific competitor and mechanism; ${spec.vulnLen}.
+- strategic_takeaways: exactly ${spec.takeaways}.
+- recommendations: exactly ${spec.recos}, each concrete and tied to the objective; ${spec.recoLen}.${spec.marketContext ? '\n- market_context: 2-3 substantial paragraphs.' : ''}`;
+
+  return `You are an elite market intelligence and corporate strategy analyst. Run a full competitive intelligence analysis for:
+
+Industry: ${c.industry}
+Target Company: ${c.target}
+Competitor Set: ${c.competitors}
+Primary Objective: ${c.objective}
+Report Style: ${spec.styleNote}
+${c.extraInstructions ? `Additional instructions from the requester (follow these closely): ${c.extraInstructions}\n` : ''}
+${c.webText ? `Below are live research sources gathered for this run. Ground your analysis in these wherever relevant, and cite the source number [n] inline wherever you use something from them:\n\n${c.webText}\n\nRULE: for every numeric or factual claim (revenue, market share, funding, pricing, headcount), you must either (a) cite the [n] source it came from, or (b) explicitly mark it as "(estimate)". If two sources disagree, say so explicitly.` : ''}${c.uploadedContext ? `\nThe analyst also uploaded supporting data (file: ${c.uploadedFileName}). Treat this as a primary, high-trust source — cite it as "(per uploaded data)" wherever used:\n\n${c.uploadedContext}\n` : ''}Use your own knowledge only to fill genuine gaps, marking those as "(estimate)". Be specific and concrete, not generic.
+
+Return a JSON object matching exactly this schema:
+
+${schema}
+
+${requirements}`;
 }
 
 /* ---------- DOWNLOADS ---------- */
@@ -192,6 +303,10 @@ async function downloadWord(){
     new Paragraph({ children:[new TextRun({text:`Industry: ${industry}  ·  Competitors: ${competitors}  ·  Objective: ${objective}  ·  Generated ${new Date().toLocaleDateString()}`, italics:true, size:18})], spacing:{after:280} }),
     H('Executive Summary'), P(data.executive_summary)
   ];
+  if(data.market_context){
+    children.push(H('Market Context'));
+    String(data.market_context).split(/\n\s*\n/).forEach(p=>children.push(P(p)));
+  }
   if(data._sources && data._sources.length){
     children.push(H('Live Web Sources'));
     data._sources.forEach((s,i)=>children.push(P(`[${i+1}] ${s.title} — ${s.url}`)));
@@ -337,6 +452,10 @@ async function downloadPdf(){
   addText(`${industry}  ·  vs. ${competitors}  ·  ${objective}`, 9, false, 12, [110,118,132]);
   addHeader('Executive Summary');
   addText(data.executive_summary||'', 10, false, 12);
+  if(data.market_context){
+    addHeader('Market Context');
+    String(data.market_context).split(/\n\s*\n/).forEach(p=>addText(p, 10, false, 8));
+  }
 
   if(data.benchmark_matrix && data.benchmark_matrix.rows){
     addHeader('Competitive Benchmarking Matrix');
@@ -629,51 +748,18 @@ async function runAnalysis(){
   const uploadedContext = uploaded.text;
   const uploadedFileName = uploaded.name;
 
+  const spec = REPORT_SPECS[reportType] || REPORT_SPECS.standard;
   const webContext = await fetchWebContext(industry, target, competitors, (q)=>{
     $('loadingText').textContent = 'Searching — ' + q;
-  });
+  }, spec);
   $('loadingText').textContent = 'Synthesizing report…';
 
-  const reportTypeInstructions = {
-    standard: 'Standard depth and tone — balanced detail across all sections.',
-    brief: 'Executive brief: be concise everywhere — shorter executive summary (2-3 sentences), fewer but sharper SWOT/takeaway bullets (3 each), tight recommendation detail (1 sentence each).',
-    deepdive: 'Analyst deep-dive: go longer and more detailed everywhere — richer executive summary (5-6 sentences), 6-8 items per SWOT quadrant, more granular benchmark_matrix rows.',
-    case: 'Case-interview style: frame the benchmark_matrix and SWOT explicitly around structured frameworks, and make strategic_takeaways read like case conclusions building toward the recommendations.'
-  };
-
-  const prompt = `You are an elite market intelligence and corporate strategy analyst. Run a full competitive intelligence analysis for:
-
-Industry: ${industry}
-Target Company: ${target}
-Competitor Set: ${competitors}
-Primary Objective: ${objective}
-Report Style: ${reportTypeInstructions[reportType] || reportTypeInstructions.standard}
-${extraInstructions ? `Additional instructions from the requester (follow these closely): ${extraInstructions}\n` : ''}
-${webContext.text ? `Below are live research sources gathered for this run. Ground your analysis in these wherever relevant, and cite the source number [n] inline wherever you use something from them:\n\n${webContext.text}\n\nRULE: for every numeric or factual claim (revenue, market share, funding, pricing, headcount), you must either (a) cite the [n] source it came from, or (b) explicitly mark it as "(estimate)". If two sources disagree, say so explicitly.` : ''}${uploadedContext ? `\nThe analyst also uploaded supporting data (file: ${uploadedFileName}). Treat this as a primary, high-trust source — cite it as "(per uploaded data)" wherever used:\n\n${uploadedContext}\n` : ''}Use your own knowledge only to fill genuine gaps, marking those as "(estimate)". Be specific and concrete, not generic.
-
-Return a JSON object matching exactly this schema:
-
-{
-  "executive_summary": "3-5 sentence 'so what' summary, specific to the named companies",
-  "footprint": {"${target}": "1-2 sentences: scale, geography, financial position", "<competitor1>": "...", "<competitor2>": "..."},
-  "benchmark_matrix": {
-    "columns": ["Vector", "${target}", "<competitor1>", "<competitor2>", "..."],
-    "rows": [ ["Pricing Strategy", "...", "...", "..."], ["Product/Service Line", "...", "...", "..."], ["Positioning & USP", "...", "...", "..."], ["Marketing Channels", "...", "...", "..."], ["Distribution/GTM", "...", "...", "..."], ["Financial Position", "...", "...", "..."] ]
-  },
-  "swot": { "strengths": ["...", "..."], "weaknesses": ["...", "..."], "opportunities": ["...", "..."], "threats": ["...", "..."] },
-  "scores": {
-    "axes": ["Pricing Power", "Product Strength", "Brand/Marketing", "Distribution Reach", "Financial Strength"],
-    "companies": { "${target}": [1,1,1,1,1], "<competitor1>": [1,1,1,1,1] }
-  },
-  "vulnerabilities": ["Specific area where a named competitor is winning share and why, with the mechanism", "..."],
-  "strategic_takeaways": ["...", "...", "..."],
-  "recommendations": [ {"title": "Short action title", "detail": "2-3 sentence concrete next step tied to the objective"}, {"title": "...", "detail": "..."}, {"title": "...", "detail": "..."} ]
-}
-
-Include exactly 6 benchmark_matrix rows as listed above, populated for every company in the competitor set. Include 4-6 items per SWOT quadrant. Rate every company on each of the 5 fixed axes on a 1-5 integer scale, genuinely differentiated. Include 3-4 vulnerabilities naming the specific competitor and mechanism. Include exactly 3 recommendations.`;
+  const base = { industry, target, competitors, objective, extraInstructions, uploadedContext, uploadedFileName };
+  const prompt = buildPrompt(spec, { ...base, webText: webContext.text });
+  const lightPrompt = buildPrompt(spec, { ...base, webText: webContext.textLight });
 
   try{
-    const data = await callAI(prompt);
+    const data = await callAI(prompt, lightPrompt);
     data._sources = webContext.sources;
     data._uploadedFile = uploadedFileName || null;
     data._confidence = computeConfidence(data);
@@ -777,6 +863,10 @@ function render(d, target, competitors, industry, objective){
   html += `<div class="cardGrid">`;
 
   html += `<div class="card fullCard"><h3>Executive Summary</h3><p class="exec">${esc(d.executive_summary||'')}</p></div>`;
+
+  if(d.market_context){
+    html += `<div class="card fullCard"><h3>Market Context</h3>${String(d.market_context).split(/\n\s*\n/).map(p=>`<p class="exec" style="margin:0 0 12px;">${esc(p)}</p>`).join('')}</div>`;
+  }
 
   if(d.footprint){
     html += `<div class="card fullCard"><h3>Operational Footprint</h3><div class="overflow"><table><tbody>`;
