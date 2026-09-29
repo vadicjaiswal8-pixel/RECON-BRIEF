@@ -13,9 +13,9 @@ export default async function handler(req, res) {
         ? JSON.parse(req.body)
         : req.body || {};
 
-    const { provider, prompt } = body;
+    const { provider = "gemini", prompt } = body;
 
-    if (!provider || !["gemini", "groq"].includes(provider)) {
+    if (!["gemini", "groq"].includes(provider)) {
       return res.status(400).json({
         error: "Invalid provider. Use gemini or groq.",
       });
@@ -33,10 +33,33 @@ export default async function handler(req, res) {
       });
     }
 
+    // If Gemini is requested, try Gemini first.
+    // If Gemini fails, automatically fall back to Groq.
     if (provider === "gemini") {
-      return await callGemini(prompt, res);
+      try {
+        return await callGemini(prompt, res);
+      } catch (geminiError) {
+        console.error(
+          "Gemini failed. Falling back to Groq:",
+          geminiError
+        );
+
+        try {
+          return await callGroq(prompt, res);
+        } catch (groqError) {
+          console.error(
+            "Groq fallback also failed:",
+            groqError
+          );
+
+          return res.status(502).json({
+            error: "Both primary and backup AI providers failed.",
+          });
+        }
+      }
     }
 
+    // Direct Groq request.
     return await callGroq(prompt, res);
   } catch (error) {
     console.error("AI API error:", error);
@@ -74,12 +97,15 @@ async function callGemini(prompt, res) {
   if (!response.ok) {
     const text = await response.text();
 
-    console.error("Gemini upstream error:", response.status, text);
+    console.error(
+      "Gemini upstream error:",
+      response.status,
+      text
+    );
 
-    return res.status(502).json({
-      error: "Gemini request failed.",
-      status: response.status,
-    });
+    throw new Error(
+      `Gemini request failed with status ${response.status}`
+    );
   }
 
   const json = await response.json();
@@ -88,9 +114,7 @@ async function callGemini(prompt, res) {
     json?.candidates?.[0]?.content?.parts?.[0]?.text;
 
   if (!text) {
-    return res.status(502).json({
-      error: "Gemini returned no content.",
-    });
+    throw new Error("Gemini returned no content.");
   }
 
   let data;
@@ -98,12 +122,13 @@ async function callGemini(prompt, res) {
   try {
     data = JSON.parse(text);
   } catch {
-    return res.status(502).json({
-      error: "Gemini returned invalid JSON.",
-    });
+    throw new Error("Gemini returned invalid JSON.");
   }
 
-  return res.status(200).json({ data });
+  return res.status(200).json({
+    data,
+    provider: "gemini",
+  });
 }
 
 async function callGroq(prompt, res) {
@@ -137,12 +162,15 @@ async function callGroq(prompt, res) {
   if (!response.ok) {
     const text = await response.text();
 
-    console.error("Groq upstream error:", response.status, text);
+    console.error(
+      "Groq upstream error:",
+      response.status,
+      text
+    );
 
-    return res.status(502).json({
-      error: "Groq request failed.",
-      status: response.status,
-    });
+    throw new Error(
+      `Groq request failed with status ${response.status}`
+    );
   }
 
   const json = await response.json();
@@ -151,9 +179,7 @@ async function callGroq(prompt, res) {
     json?.choices?.[0]?.message?.content;
 
   if (!text) {
-    return res.status(502).json({
-      error: "Groq returned no content.",
-    });
+    throw new Error("Groq returned no content.");
   }
 
   let data;
@@ -161,10 +187,11 @@ async function callGroq(prompt, res) {
   try {
     data = JSON.parse(text);
   } catch {
-    return res.status(502).json({
-      error: "Groq returned invalid JSON.",
-    });
+    throw new Error("Groq returned invalid JSON.");
   }
 
-  return res.status(200).json({ data });
+  return res.status(200).json({
+    data,
+    provider: "groq",
+  });
 }
