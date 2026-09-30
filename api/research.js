@@ -34,17 +34,17 @@ export default async function handler(req, res) {
     );
 
     const response = await fetch("https://api.tavily.com/search", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        api_key: env.tavilyApiKey,
-        query: query.trim(),
-        max_results: safeMaxResults,
-        include_raw_content: true,
-      }),
-    });
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${env.tavilyApiKey}`,
+  },
+  body: JSON.stringify({
+    query: query.trim(),
+    max_results: safeMaxResults,
+    include_raw_content: true,
+  }),
+});
 
     if (!response.ok) {
       const text = await response.text();
