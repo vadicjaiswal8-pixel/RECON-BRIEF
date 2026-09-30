@@ -252,16 +252,80 @@ function buildPrompt(spec, c){
   "recommendations": [ {"title": "Short action title", "detail": "concrete next step tied to the objective"} ]
 }`;
 
-  const requirements = `LENGTH AND DEPTH REQUIREMENTS — mandatory. These limits define this report type, so follow them exactly:
-- executive_summary: ${spec.summary}.
-- footprint: ${spec.footprint}, for every company.
-- benchmark_matrix: exactly ${spec.rows.length} rows (${spec.rows.join(', ')}), filled in for every company; ${spec.cell}.
-- swot: ${spec.swot} in each of the four quadrants.
-- scores: every company rated on all 5 axes, 1-5 integers, genuinely differentiated.
-- vulnerabilities: exactly ${spec.vulns}, each naming a specific competitor and mechanism; ${spec.vulnLen}.
-- strategic_takeaways: exactly ${spec.takeaways}.
-- recommendations: exactly ${spec.recos}, each concrete and tied to the objective; ${spec.recoLen}.${spec.marketContext ? '\n- market_context: 2-3 substantial paragraphs.' : ''}`;
+  const requirements = `
+LENGTH AND DEPTH REQUIREMENTS — MANDATORY.
 
+These requirements define the minimum expected depth of the report. Do not produce a generic template response.
+
+EXECUTIVE SUMMARY:
+${spec.summary}
+
+FOOTPRINT:
+${spec.footprint}
+For every named company, explain relevant scale, geography, business model, financial/business position, and other information supported by the research.
+
+BENCHMARK MATRIX:
+Create exactly ${spec.rows.length} rows (${spec.rows.join(', ')}).
+Every row must contain meaningful, company-specific information. Do not use generic filler.
+
+SECTION DETAIL:
+${spec.cell}
+
+SWOT:
+${spec.swot}
+Every SWOT point must be specific to the target company and grounded in the supplied research. Where evidence is insufficient, say so rather than inventing a claim.
+
+SCORES:
+Every company must be rated on all 5 axes using 1–5 integers.
+Scores must be differentiated and supported by the research. Do not assign arbitrary or identical scores.
+
+VULNERABILITIES:
+${spec.vulns}
+Each vulnerability must identify the specific issue, the relevant evidence, and why it matters.
+
+STRATEGIC TAKEAWAYS:
+Exactly ${spec.takeaways} strategic takeaways.
+Each takeaway must explain:
+1. What the evidence shows.
+2. Why it matters.
+3. What strategic implication follows.
+
+RECOMMENDATIONS:
+Exactly ${spec.recos} recommendations.
+Each recommendation must be tied to the stated objective and supported by the research.
+${spec.recoLen}
+
+EVIDENCE DISCIPLINE:
+- Separate directly supported facts from analytical interpretation.
+- Do not present assumptions as facts.
+- Do not invent financial figures, market shares, management statements, competitors, or events.
+- When evidence is insufficient, explicitly state "Insufficient evidence".
+- Prefer specific evidence over generic business language.
+- Major findings should be traceable to the supplied sources.
+
+ANALYTICAL DEPTH:
+${spec.deep
+  ? `This is a DEEP-DIVE analysis. Go beyond description.
+Explain mechanisms, causes, implications, competitive dynamics, financial/business drivers, and strategic consequences wherever the evidence supports them.
+Connect findings across sections instead of treating each section as isolated.
+Use relevant analytical frameworks only when they genuinely help answer the objective.
+Do not add frameworks merely for decoration.`
+  : `Match the requested report depth. Do not artificially inflate the report with repetitive prose or irrelevant frameworks.`}
+
+FRAMEWORK DISCIPLINE:
+Use SWOT and the requested analytical structures only where supported by evidence.
+If another framework would materially improve the analysis, use it only when relevant to the objective and available evidence.
+Never force a framework simply to make the report appear more sophisticated.
+
+SOURCE DISCIPLINE:
+Use the supplied research evidence as the basis for analysis.
+Do not manufacture citations or sources.
+When multiple sources provide conflicting information, acknowledge the discrepancy rather than silently choosing one.
+
+QUALITY BAR:
+The report should read like analyst work, not an AI-generated generic business essay.
+Prioritize specificity, evidence, reasoning, and actionable insight over repetition or unnecessary length.
+`;
   return `You are an elite market intelligence and corporate strategy analyst. Run a full competitive intelligence analysis for:
 
 Industry: ${c.industry}
