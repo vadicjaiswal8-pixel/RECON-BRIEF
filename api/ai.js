@@ -141,21 +141,18 @@ async function callGroq(prompt, res) {
         Authorization: `Bearer ${env.groqApiKey}`,
       },
       body: JSON.stringify({
-        model:
-          process.env.GROQ_MODEL ||
-          "openai/gpt-oss-120b",
-        messages: [
-          {
-            role: "user",
-            content: prompt,
-          },
-        ],
-        response_format: {
-          type: "json_object",
-        },
-        reasoning_effort: "low",
-        max_tokens: 5000,
-      }),
+  model: "openai/gpt-oss-120b",
+  messages: [
+    {
+      role: "user",
+      content: prompt,
+    },
+  ],
+  response_format: {
+    type: "json_object",
+  },
+  max_completion_tokens: 5000,
+}),
     }
   );
 
