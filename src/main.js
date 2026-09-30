@@ -185,11 +185,12 @@ if(spec.deep){
       results.forEach(r=>{
         if(r.url && !sources.find(s=>s.url===r.url)){
           sources.push({
-            title: r.title || r.url,
-            url: r.url,
-            description: r.content ? r.content.slice(0,300) : '',
-            fullText: r.raw_content ? r.raw_content.slice(0, spec.rawChars) : null
-          });
+  id: `E${sources.length + 1}`,
+  title: r.title || r.url,
+  url: r.url,
+  description: r.content ? r.content.slice(0,300) : '',
+  fullText: r.raw_content ? r.raw_content.slice(0, spec.rawChars) : null
+});
         }
       });
     }catch(e){ /* one query failing shouldn't kill the run */ }
@@ -198,7 +199,7 @@ if(spec.deep){
   const fmt = (list, chars) => list.map((s,i)=>{
     const tag = s.fullText ? 'FULL PAGE CONTENT' : 'snippet only';
     const body = (s.fullText || s.description).slice(0, chars);
-    return `[${i+1}] ${s.title} (${s.url}) — ${tag}:\n${body}`;
+   return `[${s.id}] ${s.title} (${s.url}) — ${tag}:\n${body}`;
   }).join('\n\n');
   // textLight = the same numbering, but fewer/shorter sources, for the backup AI's smaller input limit
   return { text: fmt(sources, spec.rawChars), textLight: fmt(sources.slice(0, 8), 1000), sources };
@@ -211,6 +212,7 @@ const STD_ROWS = ['Pricing Strategy','Product/Service Line','Positioning & USP',
 const REPORT_SPECS = {
   brief: {
     styleNote: 'Executive brief for a board-level skim: ruthlessly concise, lead with the conclusion, no background or filler. Every sentence must earn its place.',
+    overview: '2-3 sentences',
     summary: '2-3 sentences', footprint: '1 short sentence',
     rows: ['Pricing Strategy','Positioning & USP','Distribution/GTM','Financial Position'],
     cell: 'under 15 words per cell', swot: '2-3 short bullets (under 12 words each)',
@@ -219,6 +221,7 @@ const REPORT_SPECS = {
   },
   standard: {
     styleNote: 'Standard depth and tone: balanced detail across all sections.',
+    overview: '4-5 sentences',
     summary: '3-5 sentences', footprint: '1-2 sentences',
     rows: STD_ROWS,
     cell: '1-2 sentences per cell', swot: '4-5 bullets',
@@ -227,6 +230,7 @@ const REPORT_SPECS = {
   },
   deepdive: {
     styleNote: 'Analyst deep-dive: exhaustive and evidence-heavy. Explain mechanisms and second-order effects, use specific numbers, dates and named examples wherever the sources allow, and never stay generic. This report should be roughly three times as long and detailed as a standard one.',
+    overview: '6-8 sentences covering company history/background, business model, major products/services, geography, scale, financial position and recent strategic context',
     summary: '6-8 sentences', footprint: '4-6 sentences covering scale, geography, business mix, financials and recent strategic moves',
     rows: [...STD_ROWS, 'Customer Segments & Geography', 'Technology & Operations'],
     cell: '2-4 sentences per cell with specific evidence', swot: '6-8 detailed bullets (each 1-2 sentences)',
@@ -236,6 +240,7 @@ const REPORT_SPECS = {
   },
   case: {
     styleNote: 'Case-interview style: structured, framework-driven and MECE. Frame the analysis with classic case-prep logic, and write the takeaways as a case conclusion in which each one builds on the last and leads directly to the recommendations.',
+    overview: '3-4 sentences covering the company background, business model, scale and relevant strategic context',
     summary: '3-4 sentences framed as situation, complication, answer', footprint: '2 sentences',
     rows: STD_ROWS,
     cell: '1-2 sentences per cell, framework-oriented', swot: '4-5 bullets',
@@ -246,7 +251,8 @@ const REPORT_SPECS = {
 
 function buildPrompt(spec, c){
   const rowsJson = spec.rows.map(r => `["${r}", "...", "...", "..."]`).join(', ');
-  const schema = `{
+ const schema = `{
+  "company_overview": "${spec.overview}, factual and specific to the target company",
   "executive_summary": "${spec.summary}, specific to the named companies — the 'so what'",
   "footprint": {"${c.target}": "${spec.footprint}: scale, geography, financial position", "<competitor1>": "...", "<competitor2>": "..."},${spec.marketContext ? `
   "market_context": "2-3 paragraphs separated by a blank line: market size, growth drivers, regulation and the structural trends shaping this industry, with cited figures",` : ''}
@@ -268,6 +274,12 @@ function buildPrompt(spec, c){
 LENGTH AND DEPTH REQUIREMENTS — MANDATORY.
 
 These requirements define the minimum expected depth of the report. Do not produce a generic template response.
+
+COMPANY OVERVIEW:
+${spec.overview}
+The Company Overview must be factual and specific to the target company.
+Cover the company's background/history, business model, major products or services, geographic presence, scale, financial/business position, and relevant recent strategic context where supported by the research.
+Do not include unsupported claims. If important information is unavailable, state "Insufficient evidence".
 
 EXECUTIVE SUMMARY:
 ${spec.summary}
@@ -313,7 +325,26 @@ EVIDENCE DISCIPLINE:
 - Do not invent financial figures, market shares, management statements, competitors, or events.
 - When evidence is insufficient, explicitly state "Insufficient evidence".
 - Prefer specific evidence over generic business language.
-- Major findings should be traceable to the supplied sources.
+
+EVIDENCE CITATION:
+- The supplied research sources have stable Evidence IDs such as [E1], [E2], [E3].
+- When a factual claim is supported by a supplied source, cite the relevant Evidence ID immediately after the claim.
+- Use the exact Evidence ID provided in the research context. Never invent an Evidence ID.
+- A claim may cite multiple sources when appropriate, for example [E2][E5].
+- Financial figures, market-share figures, growth rates, company-specific facts, regulatory facts, management statements, and major competitive claims should have supporting Evidence IDs whenever the supplied evidence contains them.
+- Analytical conclusions may cite the evidence that supports the reasoning, but clearly distinguish analysis from the underlying fact.
+- Do not add citations merely for decoration.
+- If no supplied evidence supports an important factual claim, write "Insufficient evidence" rather than inventing support.
+
+CLAIM TYPE DISCIPLINE:
+Use these distinctions internally when constructing the report:
+- FACT: directly supported by supplied evidence.
+- MANAGEMENT CLAIM: statement attributable to company management or an official company source.
+- EXTERNAL EVIDENCE: supported by an external source.
+- RECON ANALYSIS: inference or interpretation derived from the evidence.
+- INSUFFICIENT EVIDENCE: important information that cannot be adequately supported.
+
+Major findings should be traceable to one or more Evidence IDs.
 
 ANALYTICAL DEPTH:
 ${spec.deep
@@ -938,7 +969,11 @@ function render(d, target, competitors, industry, objective){
 
   html += `<div class="cardGrid">`;
 
-  html += `<div class="card fullCard"><h3>Executive Summary</h3><p class="exec">${esc(d.executive_summary||'')}</p></div>`;
+  if(d.company_overview){
+  html += `<div class="card fullCard"><h3>Company Overview</h3><p class="exec">${esc(d.company_overview)}</p></div>`;
+}
+
+html += `<div class="card fullCard"><h3>Executive Summary</h3><p class="exec">${esc(d.executive_summary || '')}</p></div>`;
 
   if(d.market_context){
     html += `<div class="card fullCard"><h3>Market Context</h3>${String(d.market_context).split(/\n\s*\n/).map(p=>`<p class="exec" style="margin:0 0 12px;">${esc(p)}</p>`).join('')}</div>`;
