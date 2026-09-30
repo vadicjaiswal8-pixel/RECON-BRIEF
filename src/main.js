@@ -153,18 +153,30 @@ async function fetchWebContext(industry, target, competitors, onProgress, spec){
   spec = spec || REPORT_SPECS.standard;
   const compList = competitors.split(',').map(s=>s.trim()).filter(Boolean);
   const queries = [
-    `${target} ${industry} revenue market share financials 2026`,
-    `${target} vs ${compList.join(' vs ')} ${industry} comparison`
-  ];
-  if(!spec.lean){
-    queries.push(...compList.slice(0,4).map(c => `${c} ${industry} revenue positioning 2026`));
-  }
-  if(spec.deep){
-    queries.push(
-      `${industry} market size growth trends regulation 2026`,
-      `${target} strategy recent developments 2026`
-    );
-  }
+  `${target} ${industry} revenue market share financials 2026`,
+  `${target} vs ${compList.join(' vs ')} ${industry} comparison`
+];
+
+if(spec.lean){
+  queries.push(
+    ...compList
+      .slice(0,4)
+      .map(c => `${c} ${industry} revenue positioning 2026`)
+  );
+}
+
+if(spec.deep){
+  queries.push(
+    `${target} annual report 2025 2026 financial performance`,
+    `${target} quarterly results revenue profit 2026`,
+    `${target} earnings call management commentary 2026`,
+    `${target} investor presentation official disclosures 2026`,
+    `site:finance.yahoo.com ${target} revenue profit stock financials`,
+    `${industry} market size growth trends regulation 2026`,
+    `${target} competitors market share strategy 2026`,
+    `${target} strategy recent developments risks opportunities 2026`
+  );
+}
   let sources = [];
   for(const q of queries){
     if(onProgress) onProgress(q);
