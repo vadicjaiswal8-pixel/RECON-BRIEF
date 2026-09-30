@@ -149,9 +149,11 @@ async function callGroq(prompt, res) {
     },
   ],
   response_format: {
-    type: "json_object",
-  },
-  max_completion_tokens: 5000,
+  type: "json_object",
+},
+reasoning_format: "hidden",
+reasoning_effort: "low",
+max_completion_tokens: 5000,
 }),
     }
   );
